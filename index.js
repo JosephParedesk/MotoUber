@@ -158,9 +158,19 @@ app.post('/webhook', async (req, res) => {
     // Ignorar mensajes propios (fromMe) y de grupos
     if (data.key.fromMe)                              return;
     if (data.key.remoteJid.includes('@g.us'))         return;
+if (data.key.fromMe)                              return;
+if (data.key.remoteJid.includes('@g.us'))         return;
 
-    const jid    = data.key.remoteJid; // '573001234567@s.whatsapp.net'
-    const numero = toE164(jid);        // '+573001234567'
+const jid     = data.key.remoteJid;
+const jidReal = (jid.includes('@lid') && data.key.remoteJidAlt)
+                  ? data.key.remoteJidAlt
+                  : jid;
+
+// Si es LID puro sin número real, ignorar
+if (jidReal.includes('@lid')) return;
+
+const numero = toE164(jidReal);
+const msg    = data.message || {};       // '+573001234567'
     const msg    = data.message || {};
 
     // Extraer contenido del mensaje según tipo
