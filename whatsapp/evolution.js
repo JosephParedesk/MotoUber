@@ -43,6 +43,7 @@ const sendText = async (numero, texto) => {
 // buttons: [{ id: 'btn_id', text: 'Texto botón' }]
 const sendButtons = async (numero, titulo, descripcion, buttons, pie = '') => {
   const number = normalizeNumber(numero);
+  console.log(`📡 sendButtons → ${number} | botones: ${buttons.length}`); // ← A
   const res = await fetch(`${BASE_URL()}/message/sendButtons/${INSTANCE()}`, {
     method : 'POST',
     headers: headers(),
@@ -64,6 +65,8 @@ const sendButtons = async (numero, titulo, descripcion, buttons, pie = '') => {
     // Fallback a texto si falla
     const opciones = buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
     await sendText(numero, `${titulo}\n${descripcion}\n\n${opciones}`);
+  }else {
+    console.log(`✅ sendButtons OK → ${number}`); // ← AGREGA
   }
 };
 
