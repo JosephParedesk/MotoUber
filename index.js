@@ -32,6 +32,7 @@ const toE164 = (numero) => {
 
 const enviar = async (numero, msg) => {
   if (!msg) return;
+  console.log(`📤 Enviando a ${numero}:`, typeof msg === 'string' ? msg.substring(0, 50) : msg.type);  // ← AGREGA
   if (typeof msg === 'string') return wa.sendText(numero, msg);
 
   switch (msg.type) {

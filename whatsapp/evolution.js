@@ -26,6 +26,7 @@ const normalizeNumber = (numero) =>
 // ── Enviar texto plano ────────────────────────────────────────
 const sendText = async (numero, texto) => {
   const number = normalizeNumber(numero);
+    console.log(`📡 sendText → ${number} | URL: ${BASE_URL()}/message/sendText/${INSTANCE()}`); 
   const res = await fetch(`${BASE_URL()}/message/sendText/${INSTANCE()}`, {
     method : 'POST',
     headers: headers(),
