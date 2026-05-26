@@ -81,6 +81,7 @@ const BTN = {
 
 module.exports = {
   bienvenidaNuevo, nombreInvalido, menuPrincipal,
+  pedirBarrio, barrioInvalido,
   pedirUbicacionTexto, pedirUbicacionGPS, ubicacionNoEntendida,
   confirmarServicio, buscandoConductor, recordatorioEsperando,
   servicioEnCurso, servicioFinalizado,
