@@ -1,17 +1,6 @@
 // ============================================================
 // admin_state/admin_state.js
 // Panel de administración vía WhatsApp
-// Reemplaza completamente a admin_state/admin_state.js original
-//
-// Comandos disponibles (se escriben en el chat del admin):
-//   menu                  → ver todos los comandos
-//   conductores           → listar conductores y su estado
-//   servicios             → servicios activos ahora
-//   stats                 → resumen del día
-//   agregar conductor     → iniciar registro de conductor nuevo
-//   activar +57XXXXXXXXXX → activar conductor
-//   desactivar +57XXXXXXX → desactivar conductor
-//   cancelar #ID          → cancelar un servicio específico
 // ============================================================
 'use strict';
 
@@ -20,7 +9,6 @@ let enviar;
 let conductorOrm;
 let servicioOrm;
 
-// Sesiones de registro en curso: { whatsapp_admin: { paso, datos } }
 const sesionesRegistro = {};
 
 const init = (enviarFn, dbConnection) => {
@@ -32,12 +20,10 @@ const init = (enviarFn, dbConnection) => {
   servicioOrm.setConnection(dbConnection);
 };
 
-// ── Helpers ──────────────────────────────────────────────────
-
 const iconoEstado = (estado) =>
   ({ online: '🟢', ocupado: '🔴', offline: '⚫' })[estado] ?? '❓';
 
-// ── Menú principal ────────────────────────────────────────────
+// ── Menú ──────────────────────────────────────────────────────
 
 const menuPrincipal = () =>
   `🔧 *Panel Admin — Moto Central*\n\n` +
@@ -77,30 +63,22 @@ const listarConductores = async () => {
 const listarServiciosActivos = async () => {
   const [rows] = await db.execute(
     `SELECT s.id, s.estado, s.ubicacion_texto, s.eta_minutos,
-            s.created_at, cl.nombre AS cliente, co.nombre AS conductor,
-            co.placa
+            s.created_at, cl.nombre AS cliente, co.nombre AS conductor, co.placa
      FROM servicios s
-     LEFT JOIN clientes    cl ON s.cliente_whatsapp    = cl.whatsapp_no
-     LEFT JOIN conductores co ON s.conductor_whatsapp  = co.whatsapp_no
+     LEFT JOIN clientes    cl ON s.cliente_whatsapp   = cl.whatsapp_no
+     LEFT JOIN conductores co ON s.conductor_whatsapp = co.whatsapp_no
      WHERE s.estado NOT IN ('completado','cancelado')
      ORDER BY s.id DESC LIMIT 20`
   );
 
   if (rows.length === 0) return '✅ No hay servicios activos en este momento.';
 
-  const iconoServicio = {
-    pendiente : '⏳',
-    asignado  : '🛵',
-    en_punto  : '📍',
-    en_curso  : '🏃',
-  };
-
+  const iconoServicio = { pendiente: '⏳', asignado: '🛵', en_punto: '📍', en_curso: '🏃' };
   let texto = `📋 *Servicios activos (${rows.length})*\n${'─'.repeat(25)}\n\n`;
   for (const s of rows) {
     const icono    = iconoServicio[s.estado] ?? '❓';
     const minutos  = Math.floor((Date.now() - new Date(s.created_at)) / 60000);
     const conductor = s.conductor ? `🏍️ ${s.conductor} (${s.placa})` : '🔍 Sin conductor aún';
-
     texto +=
       `${icono} *#${s.id}* — ${s.estado.toUpperCase()}\n` +
       `   👤 ${s.cliente || 'Cliente'}\n` +
@@ -112,24 +90,21 @@ const listarServiciosActivos = async () => {
   return texto.trim();
 };
 
-// ── Estadísticas del día ──────────────────────────────────────
+// ── Stats ─────────────────────────────────────────────────────
 
 const statsHoy = async () => {
-  const resumen = await servicioOrm.resumenHoy();
-  const online  = await conductorOrm.online();
+  const resumen  = await servicioOrm.resumenHoy();
+  const online   = await conductorOrm.online();
   const ocupados = await conductorOrm.ocupados();
-
-  const prom = resumen.promedio_minutos
-    ? `${Math.round(resumen.promedio_minutos)} min`
-    : 'N/A';
+  const prom     = resumen.promedio_minutos ? `${Math.round(resumen.promedio_minutos)} min` : 'N/A';
 
   return (
     `📊 *Resumen de hoy*\n${'─'.repeat(25)}\n\n` +
     `*Servicios:*\n` +
-    `   ✅ Completados : ${resumen.completados   ?? 0}\n` +
-    `   ❌ Cancelados  : ${resumen.cancelados    ?? 0}\n` +
-    `   ⏳ Activos     : ${resumen.activos       ?? 0}\n` +
-    `   📦 Total       : ${resumen.total         ?? 0}\n` +
+    `   ✅ Completados : ${resumen.completados ?? 0}\n` +
+    `   ❌ Cancelados  : ${resumen.cancelados  ?? 0}\n` +
+    `   ⏳ Activos     : ${resumen.activos     ?? 0}\n` +
+    `   📦 Total       : ${resumen.total       ?? 0}\n` +
     `   ⏱️ Tiempo prom : ${prom}\n\n` +
     `*Conductores ahora:*\n` +
     `   🟢 En línea    : ${online.length}\n` +
@@ -142,42 +117,35 @@ const statsHoy = async () => {
 const cancelarServicio = async (adminWhatsapp, servicioId) => {
   const despacho = require('../dispatcher/despacho');
   const servicio = await servicioOrm.porId(servicioId);
-
   if (!servicio) return `⚠️ No existe el servicio *#${servicioId}*.`;
   if (['completado', 'cancelado'].includes(servicio.estado)) {
     return `⚠️ El servicio *#${servicioId}* ya está *${servicio.estado}*.`;
   }
-
-  // Reusar la lógica de cancelación del despachador si tiene cliente
   if (servicio.cliente_whatsapp) {
     await despacho.cancelarServicio(servicio.cliente_whatsapp);
   } else {
     await servicioOrm.cancelar(servicioId);
   }
-
   return `✅ Servicio *#${servicioId}* cancelado correctamente.`;
 };
 
-// ── Activar / desactivar conductor ───────────────────────────
+// ── Activar / desactivar ──────────────────────────────────────
 
 const activarConductor = async (numero) => {
   const conductor = await conductorOrm.existe(numero);
   if (!conductor) return `⚠️ No encontré ningún conductor con el número *${numero}*.`;
   await conductorOrm.activar(numero);
-  return `✅ Conductor *${conductor.nombre}* activado. Ya puede recibir servicios.`;
+  return `✅ Conductor *${conductor.nombre}* activado.`;
 };
 
 const desactivarConductor = async (numero) => {
   const conductor = await conductorOrm.existe(numero);
   if (!conductor) return `⚠️ No encontré ningún conductor con el número *${numero}*.`;
   await conductorOrm.desactivar(numero);
-  return `🚫 Conductor *${conductor.nombre}* desactivado. No recibirá más servicios.`;
+  return `🚫 Conductor *${conductor.nombre}* desactivado.`;
 };
 
-// ── Flujo de registro de nuevo conductor ─────────────────────
-// Paso a paso por chat, sin necesidad de CLI
-//
-// Pasos: 1=whatsapp, 2=nombre, 3=placa, 4=modelo, 5=confirmar
+// ── Registro de conductor paso a paso ────────────────────────
 
 const PASOS = {
   1: { campo: 'whatsapp_no', pregunta: '📱 ¿Cuál es el número WhatsApp del conductor?\n_Formato: +573001234567_' },
@@ -207,50 +175,7 @@ const procesarRegistro = async (adminWhatsapp, respuesta) => {
   const sesion = sesionesRegistro[adminWhatsapp];
   const { paso, datos } = sesion;
 
-  // ── Validaciones por paso ─────────────────────────────────
-  if (paso === 1) {
-    // Validar formato de número
-    if (!/^\+\d{10,15}$/.test(respuesta.trim())) {
-      return '⚠️ Número inválido. Debe incluir el código de país.\n_Ejemplo: +573001234567_';
-    }
-    const yaExiste = await conductorOrm.existe(respuesta.trim());
-    if (yaExiste) {
-      return `⚠️ Ya existe un conductor con el número *${respuesta.trim()}*.\n\nEscribe *cancelar registro* para salir.`;
-    }
-  }
-
-  if (paso === 3) {
-    // Validar formato de placa Colombia (ABC123 o ABC12C)
-    if (!/^[A-Za-z]{3}\d{2,3}[A-Za-z0-9]?$/.test(respuesta.trim())) {
-      return '⚠️ Formato de placa inválido.\n_Ejemplo válido: ABC123_';
-    }
-  }
-
-  // Guardar respuesta
-  datos[PASOS[paso].campo] = respuesta.trim();
-
-  // ── Avanzar al siguiente paso ─────────────────────────────
-  if (paso < 4) {
-    sesion.paso = paso + 1;
-    return PASOS[paso + 1].pregunta;
-  }
-
-  // ── Paso 5: confirmación ──────────────────────────────────
-  if (paso === 4) {
-    sesion.paso = 5;
-    return (
-      `📋 *Confirmar nuevo conductor:*\n\n` +
-      `📱 WhatsApp : ${datos.whatsapp_no}\n` +
-      `👤 Nombre   : ${datos.nombre}\n` +
-      `🔖 Placa    : ${datos.placa.toUpperCase()}\n` +
-      `🏍️ Modelo   : ${datos.modelo_moto}\n\n` +
-      `¿Confirmar registro?\n` +
-      `*si* → guardar\n` +
-      `*no* → cancelar`
-    );
-  }
-
-  // ── Paso 5: procesar confirmación ────────────────────────
+  // ── Paso 5: confirmación (verificar ANTES de tocar PASOS[paso]) ──
   if (paso === 5) {
     const respLower = respuesta.toLowerCase().trim();
 
@@ -265,16 +190,14 @@ const procesarRegistro = async (adminWhatsapp, respuesta) => {
         });
         delete sesionesRegistro[adminWhatsapp];
 
-        // Enviar mensaje de bienvenida al conductor recién registrado
+        // Enviar bienvenida al conductor
         try {
-          await client.sendMessage(
-            toWid(datos.whatsapp_no),
-            `👋 Hola *${datos.nombre}*!\n\n` +
-            `Fuiste registrado en *Moto Central*.\n` +
-            `Escribe *Hola* para iniciar tu jornada y empezar a recibir servicios.`
+          await enviar(
+            datos.whatsapp_no,
+            `👋 Hola *${datos.nombre}*!\n\nFuiste registrado en *Moto Central*.\nEscribe *Hola* para iniciar tu jornada.`
           );
         } catch (e) {
-          console.error('No se pudo enviar mensaje de bienvenida al conductor:', e.message);
+          console.error('No se pudo enviar bienvenida:', e.message);
         }
 
         return (
@@ -299,51 +222,71 @@ const procesarRegistro = async (adminWhatsapp, respuesta) => {
 
     return 'Responde *si* para confirmar o *no* para cancelar.';
   }
+
+  // ── Validaciones ──────────────────────────────────────────
+  if (paso === 1) {
+    if (!/^\+\d{10,15}$/.test(respuesta.trim())) {
+      return '⚠️ Número inválido. Debe incluir el código de país.\n_Ejemplo: +573001234567_';
+    }
+    const yaExiste = await conductorOrm.existe(respuesta.trim());
+    if (yaExiste) {
+      return `⚠️ Ya existe un conductor con el número *${respuesta.trim()}*.\n\nEscribe *cancelar registro* para salir.`;
+    }
+  }
+
+  if (paso === 3) {
+    if (!/^[A-Za-z]{3}\d{2,3}[A-Za-z0-9]?$/.test(respuesta.trim())) {
+      return '⚠️ Formato de placa inválido.\n_Ejemplo válido: ABC123_';
+    }
+  }
+
+  // ── Guardar y avanzar ─────────────────────────────────────
+  datos[PASOS[paso].campo] = respuesta.trim();
+
+  if (paso < 4) {
+    sesion.paso = paso + 1;
+    return PASOS[paso + 1].pregunta;
+  }
+
+  // Paso 4 completado → mostrar confirmación
+  sesion.paso = 5;
+  return (
+    `📋 *Confirmar nuevo conductor:*\n\n` +
+    `📱 WhatsApp : ${datos.whatsapp_no}\n` +
+    `👤 Nombre   : ${datos.nombre}\n` +
+    `🔖 Placa    : ${datos.placa.toUpperCase()}\n` +
+    `🏍️ Modelo   : ${datos.modelo_moto}\n\n` +
+    `¿Confirmar registro?\n` +
+    `*si* → guardar\n` +
+    `*no* → cancelar`
+  );
 };
 
 // ── Manejador principal ───────────────────────────────────────
-// index.js llama: await adminState.manejar(msg, numero, cuerpo, btnId, rowId)
-// Esta función resuelve la respuesta y la envía directamente.
 
 const manejar = async (msg, adminWhatsapp, cuerpo, btnId, rowId) => {
   const lower = cuerpo.toLowerCase();
   let respuesta;
 
   try {
-    // Si está en medio de un registro, priorizar ese flujo
     if (enRegistro(adminWhatsapp)) {
       respuesta = await procesarRegistro(adminWhatsapp, cuerpo);
-    }
-    // Menú
-    else if (['menu', 'hola', 'hi', 'hello', 'inicio', 'start'].includes(lower)) {
+    } else if (['menu', 'hola', 'hi', 'hello', 'inicio', 'start'].includes(lower)) {
       respuesta = menuPrincipal();
-    }
-    // Consultas
-    else if (lower === 'conductores')      { respuesta = await listarConductores(); }
-    else if (lower === 'servicios')        { respuesta = await listarServiciosActivos(); }
-    else if (lower === 'stats')            { respuesta = await statsHoy(); }
-    // Iniciar registro de conductor
-    else if (lower === 'agregar conductor') { respuesta = iniciarRegistro(adminWhatsapp); }
-    // Activar conductor: "activar +573001234567"
+    } else if (lower === 'conductores')       { respuesta = await listarConductores(); }
+    else if (lower === 'servicios')           { respuesta = await listarServiciosActivos(); }
+    else if (lower === 'stats')               { respuesta = await statsHoy(); }
+    else if (lower === 'agregar conductor')   { respuesta = iniciarRegistro(adminWhatsapp); }
     else if (lower.startsWith('activar ')) {
-      const numero = cuerpo.substring(8).trim();
-      respuesta = await activarConductor(numero);
-    }
-    // Desactivar conductor: "desactivar +573001234567"
-    else if (lower.startsWith('desactivar ')) {
-      const numero = cuerpo.substring(11).trim();
-      respuesta = await desactivarConductor(numero);
-    }
-    // Cancelar servicio: "cancelar #5" o "cancelar 5"
-    else if (lower.startsWith('cancelar')) {
+      respuesta = await activarConductor(cuerpo.substring(8).trim());
+    } else if (lower.startsWith('desactivar ')) {
+      respuesta = await desactivarConductor(cuerpo.substring(11).trim());
+    } else if (lower.startsWith('cancelar')) {
       const match = cuerpo.match(/#?(\d+)/);
-      if (match) {
-        respuesta = await cancelarServicio(adminWhatsapp, parseInt(match[1], 10));
-      } else {
-        respuesta = '⚠️ Indica el ID del servicio. Ejemplo: *cancelar #5*';
-      }
-    }
-    else {
+      respuesta = match
+        ? await cancelarServicio(adminWhatsapp, parseInt(match[1], 10))
+        : '⚠️ Indica el ID del servicio. Ejemplo: *cancelar #5*';
+    } else {
       respuesta = `🤔 Comando no reconocido.\n\nEscribe *menu* para ver los comandos disponibles.`;
     }
   } catch (err) {
@@ -351,14 +294,7 @@ const manejar = async (msg, adminWhatsapp, cuerpo, btnId, rowId) => {
     respuesta = '⚠️ Ocurrió un error procesando tu comando. Revisa los logs.';
   }
 
-  if (respuesta) {
-    await enviar(adminWhatsapp, respuesta);
-  }
+  if (respuesta) await enviar(adminWhatsapp, respuesta);
 };
 
-module.exports = {
-  init,
-  manejar,
-  enRegistro,
-  menuPrincipal,
-};
+module.exports = { init, manejar, enRegistro, menuPrincipal };
