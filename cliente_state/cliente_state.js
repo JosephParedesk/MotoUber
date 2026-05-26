@@ -21,7 +21,15 @@ const nombreInvalido = () =>
 const menuPrincipal = (nombre) =>
   texto(`Hola *${nombre}* 👋\n\n¿Cómo quieres indicar dónde estás?\n\n1️⃣ Escribir dirección\n2️⃣ Compartir ubicación GPS\n\nResponde con *1* o *2*`);
 
-// ── Estado 3: esperando ubicación ────────────────────────────
+// ── Estado 3: esperando barrio ────────────────────────────────
+
+const pedirBarrio = () =>
+  texto(`🏘️ ¿En qué *barrio* te encuentras?\n\n_Ejemplo: "Centro", "El Poblado", "La 14"_`);
+
+const barrioInvalido = () =>
+  texto(`⚠️ No entendí el barrio. Escribe solo el nombre del sector o barrio.`);
+
+// ── Estado 4: esperando ubicación ────────────────────────────
 
 const pedirUbicacionTexto = () =>
   texto(`📝 Escribe tu dirección o un punto de referencia claro:\n\n_Ejemplo: "Calle 5 # 10-23, frente al parque central"_`);

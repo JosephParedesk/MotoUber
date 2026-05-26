@@ -149,7 +149,7 @@ const manejarAceptacion = async (conductorWhatsapp, servicioId) => {
       await enviar(conductorWhatsapp, mensajeConductor);
     }
 
-    await db.execute(`UPDATE clientes SET estado_conv = 6 WHERE whatsapp_no = ?`, [servicio.cliente_whatsapp]);
+    await db.execute(`UPDATE clientes SET estado_conv = 7 WHERE whatsapp_no = ?`, [servicio.cliente_whatsapp]);
 
     console.log(`✅ Servicio #${servicioId} asignado a ${conductorWhatsapp}`);
     return { asignado: true };

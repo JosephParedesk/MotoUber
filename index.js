@@ -368,92 +368,116 @@ const manejarCliente = async (msg, numero) => {
     return;
   }
 
-  // Estado 2: menú principal — "1" texto, "2" GPS
-  if (estado === 2) {
-    if (cuerpo === '1') {
-      await setEstadoCliente(numero, 3);
-      await enviar(numero, cls.pedirUbicacionTexto());
-      return;
-    }
-    if (cuerpo === '2') {
-      await setEstadoCliente(numero, 3);
-      await enviar(numero, cls.pedirUbicacionGPS());
-      return;
-    }
-    await enviar(numero, cls.menuPrincipal(cliente?.nombre));
+// Estado 2: menú principal — "1" texto, "2" GPS
+if (estado === 2) {
+  if (cuerpo === '1' || cuerpo === '2') {
+    await db.execute(
+      'UPDATE clientes SET notas = ? WHERE whatsapp_no = ?',
+      [cuerpo, numero]   // guardamos si eligió texto o GPS
+    );
+    await setEstadoCliente(numero, 3);
+    await enviar(numero, cls.pedirBarrio());
+    return;
+  }
+  await enviar(numero, cls.menuPrincipal(cliente?.nombre));
+  return;
+}
+
+// Estado 3: esperando barrio ← NUEVO
+if (estado === 3) {
+  const barrio = cuerpo.trim();
+  if (barrio.length < 2) {
+    await enviar(numero, cls.barrioInvalido());
+    return;
+  }
+  // Guardamos el barrio temporalmente en el campo nombre_barrio o lo concatenamos después
+  await db.execute(
+    'UPDATE clientes SET barrio_temp = ? WHERE whatsapp_no = ?',
+    [barrio, numero]
+  );
+  await setEstadoCliente(numero, 4);
+  // Mostrar instrucción según lo que eligió en el menú
+  const [cl] = await db.execute('SELECT notas, barrio_temp FROM clientes WHERE whatsapp_no = ?', [numero]);
+  const opcion = cl[0]?.notas;
+  await enviar(numero, opcion === '2' ? cls.pedirUbicacionGPS() : cls.pedirUbicacionTexto());
+  return;
+}
+
+// Estado 4: esperando ubicación
+if (estado === 4) {
+  let ubicacionTexto = null;
+  let lat = null, lng = null;
+
+  if (tipo === 'location' && location) {
+    lat = location.latitude;
+    lng = location.longitude;
+    ubicacionTexto = `📍 GPS: ${lat}, ${lng}`;
+  } else if (cuerpo.length > 3) {
+    ubicacionTexto = cuerpo;
+  } else {
+    await enviar(numero, cls.ubicacionNoEntendida());
     return;
   }
 
-  // Estado 3: esperando ubicación
-  if (estado === 3) {
-    let ubicacionTexto = null;
-    let lat = null, lng = null;
+  // Combinar barrio + ubicación
+  const [cl] = await db.execute('SELECT barrio_temp FROM clientes WHERE whatsapp_no = ?', [numero]);
+  const barrio = cl[0]?.barrio_temp || '';
+  const ubicacionFinal = barrio ? `${barrio} — ${ubicacionTexto}` : ubicacionTexto;
 
-    if (tipo === 'location' && location) {
-      lat = location.latitude;
-      lng = location.longitude;
-      ubicacionTexto = `📍 GPS: ${lat}, ${lng}`;
-    } else if (cuerpo.length > 3) {
-      ubicacionTexto = cuerpo;
-    } else {
-      await enviar(numero, cls.ubicacionNoEntendida());
-      return;
-    }
+  const servicioId = await despacho.crearServicio(numero, ubicacionFinal, lat, lng);
+  await db.execute(`UPDATE servicios SET notas = 'pendiente_confirmacion' WHERE id = ?`, [servicioId]);
+  await setEstadoCliente(numero, 5);
+  await enviar(numero, cls.confirmarServicio(ubicacionFinal));
+  return;
+}
 
-    const servicioId = await despacho.crearServicio(numero, ubicacionTexto, lat, lng);
-    await db.execute(`UPDATE servicios SET notas = 'pendiente_confirmacion' WHERE id = ?`, [servicioId]);
-    await setEstadoCliente(numero, 4);
-    await enviar(numero, cls.confirmarServicio(ubicacionTexto));
-    return;
-  }
-
-  // Estado 4: confirmando servicio — "1" confirmar, "2" cancelar
-  if (estado === 4) {
-    if (cuerpo === '1') {
-      const [rows] = await db.execute(
-        `SELECT id, ubicacion_texto, ubicacion_lat, ubicacion_lng FROM servicios
-         WHERE cliente_whatsapp = ? AND notas = 'pendiente_confirmacion' ORDER BY id DESC LIMIT 1`,
-        [numero]
-      );
-      if (!rows.length) {
-        await setEstadoCliente(numero, 2);
-        await enviar(numero, cls.errorGenerico());
-        await enviar(numero, cls.menuPrincipal(cliente?.nombre));
-        return;
-      }
-      const s = rows[0];
-      await db.execute(`UPDATE servicios SET notas = NULL WHERE id = ?`, [s.id]);
-      await setEstadoCliente(numero, 5);
-      await enviar(numero, cls.buscandoConductor());
-      const ubicacion = s.ubicacion_texto || `GPS: ${s.ubicacion_lat}, ${s.ubicacion_lng}`;
-      await despacho.despacharServicio(s.id, numero, ubicacion);
-      return;
-    }
-    if (cuerpo === '2') {
-      await db.execute(`DELETE FROM servicios WHERE cliente_whatsapp = ? AND notas = 'pendiente_confirmacion'`, [numero]);
+// Estado 5: confirmando servicio — "1" confirmar, "2" cancelar
+if (estado === 5) {
+  if (cuerpo === '1') {
+    const [rows] = await db.execute(
+      `SELECT id, ubicacion_texto, ubicacion_lat, ubicacion_lng FROM servicios
+       WHERE cliente_whatsapp = ? AND notas = 'pendiente_confirmacion' ORDER BY id DESC LIMIT 1`,
+      [numero]
+    );
+    if (!rows.length) {
       await setEstadoCliente(numero, 2);
-      await enviar(numero, cls.cancelacionConfirmada());
+      await enviar(numero, cls.errorGenerico());
       await enviar(numero, cls.menuPrincipal(cliente?.nombre));
       return;
     }
-    await enviar(numero, cls.confirmarServicio('(tu ubicación anterior)'));
+    const s = rows[0];
+    await db.execute(`UPDATE servicios SET notas = NULL WHERE id = ?`, [s.id]);
+    await setEstadoCliente(numero, 6);
+    await enviar(numero, cls.buscandoConductor());
+    const ubicacion = s.ubicacion_texto || `GPS: ${s.ubicacion_lat}, ${s.ubicacion_lng}`;
+    await despacho.despacharServicio(s.id, numero, ubicacion);
     return;
   }
+  if (cuerpo === '2') {
+    await db.execute(`DELETE FROM servicios WHERE cliente_whatsapp = ? AND notas = 'pendiente_confirmacion'`, [numero]);
+    await setEstadoCliente(numero, 2);
+    await enviar(numero, cls.cancelacionConfirmada());
+    await enviar(numero, cls.menuPrincipal(cliente?.nombre));
+    return;
+  }
+  await enviar(numero, cls.confirmarServicio('(tu ubicación anterior)'));
+  return;
+}
 
-  // Estado 5: esperando conductor
-  if (estado === 5) {
-    await enviar(numero, cls.recordatorioEsperando());
-    return;
-  }
+// Estado 6: esperando conductor
+if (estado === 6) {
+  await enviar(numero, cls.recordatorioEsperando());
+  return;
+}
 
-  // Estado 6: servicio en curso
-  if (estado === 6) {
-    const servicio = await despacho.getServicioActivoCliente(numero);
-    if (servicio) {
-      await enviar(numero, cls.servicioEnCurso({ nombre: servicio.conductor_nombre, placa: servicio.placa }));
-    }
-    return;
+// Estado 7: servicio en curso
+if (estado === 7) {
+  const servicio = await despacho.getServicioActivoCliente(numero);
+  if (servicio) {
+    await enviar(numero, cls.servicioEnCurso({ nombre: servicio.conductor_nombre, placa: servicio.placa }));
   }
+  return;
+}
 
   // Fallback
   await setEstadoCliente(numero, 2);
