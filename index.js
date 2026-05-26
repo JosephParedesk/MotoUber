@@ -32,16 +32,21 @@ const toE164 = (numero) => {
 
 const enviar = async (numero, msg) => {
   if (!msg) return;
-  console.log(`📤 Enviando a ${numero}:`, typeof msg === 'string' ? msg.substring(0, 50) : msg.type);  // ← AGREGA
+  console.log(`📤 Enviando a ${numero}:`, typeof msg === 'string' ? msg.substring(0, 50) : msg.type);
   if (typeof msg === 'string') return wa.sendText(numero, msg);
 
   switch (msg.type) {
     case 'text':
       return wa.sendText(numero, msg.text);
-    case 'buttons':
-      return wa.sendButtons(numero, msg.title, msg.text, msg.buttons, msg.footer);
-    case 'list':
-      return wa.sendList(numero, msg.title, msg.text, msg.boton, msg.rows, msg.footer);
+    case 'buttons': {
+      // Fallback directo a texto — botones no funcionan en Colombia
+      const opciones = msg.buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
+      return wa.sendText(numero, `${msg.title || ''}\n${msg.text || ''}\n\n${opciones}${msg.footer ? '\n\n' + msg.footer : ''}`);
+    }
+    case 'list': {
+      const opciones = msg.rows.map((r, i) => `${i + 1}. ${r.title}`).join('\n');
+      return wa.sendText(numero, `${msg.title || ''}\n${msg.text || ''}\n\n${opciones}${msg.footer ? '\n\n' + msg.footer : ''}`);
+    }
     default:
       return wa.sendText(numero, msg.text || JSON.stringify(msg));
   }
