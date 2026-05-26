@@ -80,6 +80,8 @@ const despacharServicio = async (servicioId, clienteWhatsapp, ubicacion) => {
 
 // ── Manejar aceptación ────────────────────────────────────────
 
+// ── Manejar aceptación ────────────────────────────────────────
+
 const manejarAceptacion = async (conductorWhatsapp, servicioId) => {
   const conn = await db.getConnection();
   try {
@@ -116,12 +118,35 @@ const manejarAceptacion = async (conductorWhatsapp, servicioId) => {
 
     await notificarConductoresVencidos(servicioId, conductorWhatsapp);
 
+    // ── NUEVO: obtener datos completos del servicio ──────────────
+    const [datosServicio] = await db.execute(
+      `SELECT ubicacion_texto, ubicacion_lat, ubicacion_lng, cliente_whatsapp
+       FROM servicios WHERE id = ?`,
+      [servicioId]
+    );
+
     const [datosConductor] = await db.execute(
       `SELECT nombre, whatsapp_no, placa, modelo_moto, foto_url FROM conductores WHERE whatsapp_no = ?`,
       [conductorWhatsapp]
     );
+
     if (datosConductor.length > 0) {
       await notificarCliente(servicio.cliente_whatsapp, datosConductor[0]);
+    }
+
+    // ── NUEVO: notificar al conductor con ubicación GPS + número del cliente ──
+    if (datosServicio.length > 0) {
+      const ds = datosServicio[0];
+      const ubicacionFormateada = formatearUbicacion(
+        ds.ubicacion_texto,
+        ds.ubicacion_lat,
+        ds.ubicacion_lng
+      );
+      const mensajeConductor =
+        `✅ *¡Servicio asignado a ti!*\n\n` +
+        `📍 *Ubicación del cliente:*\n${ubicacionFormateada}\n\n` +
+        `📞 *Número del cliente:* wa.me/${ds.cliente_whatsapp}`;
+      await enviar(conductorWhatsapp, mensajeConductor);
     }
 
     await db.execute(`UPDATE clientes SET estado_conv = 6 WHERE whatsapp_no = ?`, [servicio.cliente_whatsapp]);
