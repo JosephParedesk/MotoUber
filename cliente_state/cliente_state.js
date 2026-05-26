@@ -1,11 +1,10 @@
 // ============================================================
 // cliente_state/cliente_state.js
-// Mensajes del flujo cliente — sin dependencia de whatsapp-web.js
+// Mensajes del flujo cliente — texto plano sin botones
 // ============================================================
 'use strict';
 
-const texto   = (text)                         => ({ type: 'text', text });
-const botones = (text, title, footer, buttons) => ({ type: 'buttons', text, title, footer, buttons });
+const texto = (text) => ({ type: 'text', text });
 
 // ── Estado 0: nuevo usuario ──────────────────────────────────
 
@@ -19,15 +18,8 @@ const nombreInvalido = () =>
 
 // ── Estado 2: menú principal ─────────────────────────────────
 
-const menuPrincipal = (nombre) => botones(
-  `Hola *${nombre}* 👋\n\n¿Cómo quieres indicar dónde estás?`,
-  'Moto Central',
-  'Selecciona una opción para pedir tu moto',
-  [
-    { id: BTN.PEDIR_TEXTO, text: '📝 Escribir dirección'  },
-    { id: BTN.PEDIR_GPS,   text: '📍 Compartir ubicación' },
-  ]
-);
+const menuPrincipal = (nombre) =>
+  texto(`Hola *${nombre}* 👋\n\n¿Cómo quieres indicar dónde estás?\n\n1️⃣ Escribir dirección\n2️⃣ Compartir ubicación GPS\n\nResponde con *1* o *2*`);
 
 // ── Estado 3: esperando ubicación ────────────────────────────
 
@@ -42,15 +34,8 @@ const ubicacionNoEntendida = () =>
 
 // ── Estado 4: confirmar servicio ─────────────────────────────
 
-const confirmarServicio = (ubicacion) => botones(
-  `📋 *Resumen de tu pedido*\n\n📍 *Ubicación:*\n${ubicacion}\n\n¿Confirmamos el servicio?`,
-  'Confirmar pedido',
-  'Un conductor llegará lo antes posible',
-  [
-    { id: BTN.CONFIRMAR_SERVICIO, text: '✅ Confirmar' },
-    { id: BTN.CANCELAR_SERVICIO,  text: '❌ Cancelar'  },
-  ]
-);
+const confirmarServicio = (ubicacion) =>
+  texto(`📋 *Resumen de tu pedido*\n\n📍 *Ubicación:*\n${ubicacion}\n\n¿Confirmamos el servicio?\n\n1️⃣ Confirmar\n2️⃣ Cancelar\n\nResponde con *1* o *2*`);
 
 // ── Estado 5: esperando conductor ────────────────────────────
 
@@ -67,16 +52,6 @@ const servicioFinalizado = () =>
 
 // ── Cancelación ───────────────────────────────────────────────
 
-const confirmarCancelacion = () => botones(
-  `¿Estás seguro de que quieres cancelar tu servicio?`,
-  'Cancelar servicio',
-  '',
-  [
-    { id: BTN.SI_CANCELAR, text: '✅ Sí, cancelar' },
-    { id: BTN.NO_CANCELAR, text: '❌ No, mantener' },
-  ]
-);
-
 const cancelacionConfirmada = () => texto(`❌ *Servicio cancelado.*\n\nEscribe *Hola* cuando quieras pedir otra moto.`);
 const cancelacionAbortada   = () => texto(`✅ Servicio mantenido. ¡Tu conductor ya viene! 🛵`);
 const nada_que_cancelar     = () => texto(`⚠️ No tienes un servicio activo para cancelar.`);
@@ -85,7 +60,7 @@ const nada_que_cancelar     = () => texto(`⚠️ No tienes un servicio activo p
 
 const errorGenerico = () => texto(`⚠️ Algo salió mal. Por favor escribe *Hola* para intentar de nuevo.`);
 
-// ── IDs de botones ────────────────────────────────────────────
+// ── IDs de botones (se mantienen para compatibilidad con index.js) ────
 
 const BTN = {
   PEDIR_TEXTO       : 'pedir_ubicacion_texto',
@@ -101,7 +76,7 @@ module.exports = {
   pedirUbicacionTexto, pedirUbicacionGPS, ubicacionNoEntendida,
   confirmarServicio, buscandoConductor, recordatorioEsperando,
   servicioEnCurso, servicioFinalizado,
-  confirmarCancelacion, cancelacionConfirmada, cancelacionAbortada, nada_que_cancelar,
+  cancelacionConfirmada, cancelacionAbortada, nada_que_cancelar,
   errorGenerico,
   BTN,
 };

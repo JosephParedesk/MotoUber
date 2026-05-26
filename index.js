@@ -16,8 +16,10 @@ const despacho   = require('./dispatcher/despacho');
 const cs         = require('./conductor_state/conductor_state');
 const cls        = require('./cliente_state/cliente_state');
 const adminState = require('./admin_state/admin_state');
-const { BTN: CBTN, ETA_ROW_IDS } = cs;
-const { BTN: CLBTN } = cls;
+const { ETA_ROW_IDS } = cs;
+
+// Mapa de ETA por número de respuesta
+const ETA_MAP = { '1': 3, '2': 5, '3': 10, '4': 15, '5': 20, '6': 30 };
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -26,30 +28,12 @@ const toE164 = (numero) => {
   return '+' + limpio;
 };
 
-// ── Enviar mensaje según tipo ─────────────────────────────────
-// Convierte el objeto { type, ... } del state al llamado correcto
-// del adaptador de Evolution API
+// ── Enviar mensaje ────────────────────────────────────────────
 
 const enviar = async (numero, msg) => {
   if (!msg) return;
-  console.log(`📤 Enviando a ${numero}:`, typeof msg === 'string' ? msg.substring(0, 50) : msg.type);
   if (typeof msg === 'string') return wa.sendText(numero, msg);
-
-  switch (msg.type) {
-    case 'text':
-      return wa.sendText(numero, msg.text);
-    case 'buttons': {
-      // Fallback directo a texto — botones no funcionan en Colombia
-      const opciones = msg.buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
-      return wa.sendText(numero, `${msg.title || ''}\n${msg.text || ''}\n\n${opciones}${msg.footer ? '\n\n' + msg.footer : ''}`);
-    }
-    case 'list': {
-      const opciones = msg.rows.map((r, i) => `${i + 1}. ${r.title}`).join('\n');
-      return wa.sendText(numero, `${msg.title || ''}\n${msg.text || ''}\n\n${opciones}${msg.footer ? '\n\n' + msg.footer : ''}`);
-    }
-    default:
-      return wa.sendText(numero, msg.text || JSON.stringify(msg));
-  }
+  return wa.sendText(numero, msg.text || JSON.stringify(msg));
 };
 
 // ── Base de datos ────────────────────────────────────────────
@@ -144,58 +128,49 @@ const isAdmin = async (whatsapp) => {
 const app = express();
 app.use(express.json());
 
-// Health check para Railway
 app.get('/', (req, res) => res.json({ status: 'ok', bot: 'Moto Central' }));
 
-// Webhook que recibe mensajes de Evolution API
 app.post('/webhook', async (req, res) => {
-  res.sendStatus(200); // Responder rápido a Evolution API
+  res.sendStatus(200);
 
   try {
     const body = req.body;
-
-    // Evolution API envía diferentes tipos de eventos
-    // Solo nos interesan los mensajes entrantes
     if (body.event !== 'messages.upsert') return;
 
     const data = body.data;
     if (!data || !data.key) return;
 
-    // Ignorar mensajes propios (fromMe) y de grupos
-    if (data.key.fromMe)                              return;
-    if (data.key.remoteJid.includes('@g.us'))         return;
-if (data.key.fromMe)                              return;
-if (data.key.remoteJid.includes('@g.us'))         return;
+    if (data.key.fromMe) return;
+    if (data.key.remoteJid.includes('@g.us')) return;
 
-const jid     = data.key.remoteJid;
+    const jid     = data.key.remoteJid;
     const jidReal = (jid.includes('@lid') && data.key.remoteJidAlt)
                       ? data.key.remoteJidAlt
                       : jid;
     if (jidReal.includes('@lid')) return;
+
     const numero = toE164(jidReal);
     const msg    = data.message || {};
 
-    // Extraer contenido del mensaje según tipo
-    const cuerpo = msg.conversation
+    const cuerpo = (
+      msg.conversation
       || msg.extendedTextMessage?.text
       || msg.buttonsResponseMessage?.selectedDisplayText
       || msg.listResponseMessage?.title
-      || '';
-
-    const btnId = msg.buttonsResponseMessage?.selectedButtonId || '';
-    const rowId = msg.listResponseMessage?.singleSelectReply?.selectedRowId || '';
+      || ''
+    ).trim();
 
     const tipo = msg.locationMessage ? 'location' : 'text';
     const location = msg.locationMessage
       ? { latitude: msg.locationMessage.degreesLatitude, longitude: msg.locationMessage.degreesLongitude }
       : null;
 
-    // Crear objeto msg simplificado para los handlers
-    const msgObj = { numero, jid, cuerpo, btnId, rowId, tipo, location };
+    const msgObj = { numero, jid: jidReal, cuerpo, tipo, location };
 
-    // ── Routing ───────────────────────────────────────────────
+    console.log(`📨 ${numero} | Estado? | Cuerpo: "${cuerpo}"`);
+
     if (await isAdmin(numero)) {
-      await adminState.manejar(msgObj, numero, cuerpo, btnId, rowId);
+      await adminState.manejar(msgObj, numero, cuerpo, '', '');
       return;
     }
 
@@ -204,23 +179,25 @@ const jid     = data.key.remoteJid;
       await manejarConductor(msgObj, conductor);
       return;
     }
-       console.log(`➡️ Enrutando a cliente: ${numero}`); // ← AQUÍ
+
     await manejarCliente(msgObj, numero);
 
   } catch (err) {
-    console.error('❌ Error en webhook:', err);
+    console.error('❌ Error en webhook:', err.message, err.stack);
   }
 });
 
 // ── FLUJO CONDUCTOR ───────────────────────────────────────────
 
 const manejarConductor = async (msg, conductor) => {
-  const { numero, cuerpo, btnId, rowId } = msg;
+  const { numero, cuerpo } = msg;
   const estado = conductor.estado_conv;
 
-  // Estado 0: offline
+  console.log(`🚗 Conductor: ${numero} | Estado: ${estado} | Cuerpo: "${cuerpo}"`);
+
+  // Estado 0: offline — responde "1" para iniciar
   if (estado === 0) {
-    if (btnId === CBTN.INICIAR_JORNADA) {
+    if (cuerpo === '1') {
       await db.execute(`UPDATE conductores SET estado = 'online', estado_conv = 1 WHERE whatsapp_no = ?`, [numero]);
       await db.execute(`INSERT INTO jornadas (conductor_whatsapp) VALUES (?)`, [numero]);
       const [jRow] = await db.execute(
@@ -234,9 +211,9 @@ const manejarConductor = async (msg, conductor) => {
     return;
   }
 
-  // Estado 1: online disponible
+  // Estado 1: online — responde "0" para finalizar
   if (estado === 1) {
-    if (btnId === CBTN.FINALIZAR_JORNADA) {
+    if (cuerpo === '0') {
       await db.execute(`UPDATE conductores SET estado = 'offline', estado_conv = 0 WHERE whatsapp_no = ?`, [numero]);
       await db.execute(`UPDATE jornadas SET fin = NOW() WHERE conductor_whatsapp = ? AND fin IS NULL`, [numero]);
       await enviar(numero, '👋 *Jornada finalizada.*\nDescansa bien. ¡Hasta pronto!');
@@ -250,11 +227,11 @@ const manejarConductor = async (msg, conductor) => {
     return;
   }
 
-  // Estado 2: notificado, esperando respuesta
+  // Estado 2: notificado — "1" aceptar, "2" rechazar
   if (estado === 2) {
     const servicio = await despacho.getServicioActivoConductor(numero);
 
-    if (btnId === CBTN.ACEPTAR_SERVICIO) {
+    if (cuerpo === '1') {
       if (!servicio) {
         await enviar(numero, cs.servicioYaTomado());
         await setEstadoConductor(numero, 1);
@@ -272,7 +249,7 @@ const manejarConductor = async (msg, conductor) => {
       return;
     }
 
-    if (btnId === CBTN.RECHAZAR_SERVICIO) {
+    if (cuerpo === '2') {
       if (servicio) await despacho.manejarRechazo(numero, servicio.id);
       await setEstadoConductor(numero, 1);
       await enviar(numero, cs.servicioRechazado());
@@ -283,10 +260,10 @@ const manejarConductor = async (msg, conductor) => {
     return;
   }
 
-  // Estado 3: aceptado, esperando ETA
+  // Estado 3: aceptado, esperando ETA — responde 1-6
   if (estado === 3) {
-    if (ETA_ROW_IDS.includes(rowId)) {
-      const minutos  = parseInt(rowId.replace('eta_', ''), 10);
+    const minutos = ETA_MAP[cuerpo];
+    if (minutos) {
       const servicio = await despacho.getServicioActivoConductor(numero);
       if (servicio) {
         await despacho.setETA(servicio.id, minutos);
@@ -301,9 +278,9 @@ const manejarConductor = async (msg, conductor) => {
     return;
   }
 
-  // Estado 4: en camino
+  // Estado 4: en camino — "1" para llegué al punto
   if (estado === 4) {
-    if (btnId === CBTN.LLEGUE_PUNTO) {
+    if (cuerpo === '1') {
       const servicio = await despacho.getServicioActivoConductor(numero);
       if (servicio) {
         await despacho.conductorEnPunto(servicio.id, servicio.cliente_whatsapp);
@@ -320,9 +297,9 @@ const manejarConductor = async (msg, conductor) => {
     return;
   }
 
-  // Estado 5: en punto
+  // Estado 5: en punto — "1" para finalizar servicio
   if (estado === 5) {
-    if (btnId === CBTN.FINALIZAR_SERVICIO) {
+    if (cuerpo === '1') {
       const servicio = await despacho.getServicioActivoConductor(numero);
       if (servicio) {
         await despacho.finalizarServicio(servicio.id, numero, servicio.cliente_whatsapp);
@@ -347,11 +324,12 @@ const manejarConductor = async (msg, conductor) => {
 // ── FLUJO CLIENTE ─────────────────────────────────────────────
 
 const manejarCliente = async (msg, numero) => {
-  const { cuerpo, btnId, tipo, location } = msg;
+  const { cuerpo, tipo, location } = msg;
   let cliente  = await upsertCliente(numero);
   const estado = cliente.estado_conv;
-    console.log(`🔍 Cliente: ${numero} | Estado: ${estado} | Cuerpo: "${cuerpo}" | BtnId: "${btnId}"`);
   const esInicio = ['hola', 'hi', 'hello', 'inicio', 'start', 'menu'].includes(cuerpo.toLowerCase());
+
+  console.log(`👤 Cliente: ${numero} | Estado: ${estado} | Cuerpo: "${cuerpo}"`);
 
   // Estado 0: nuevo usuario
   if (estado === 0) {
@@ -375,16 +353,11 @@ const manejarCliente = async (msg, numero) => {
   }
 
   // Cancelar desde cualquier estado
-  if (cuerpo.toLowerCase() === 'cancelar' || btnId === CLBTN.SI_CANCELAR) {
+  if (cuerpo.toLowerCase() === 'cancelar') {
     const resultado = await despacho.cancelarServicio(numero);
     await enviar(numero, resultado.cancelado ? cls.cancelacionConfirmada() : cls.nada_que_cancelar());
     await setEstadoCliente(numero, 2);
     await enviar(numero, cls.menuPrincipal(cliente?.nombre));
-    return;
-  }
-
-  if (btnId === CLBTN.NO_CANCELAR) {
-    await enviar(numero, cls.cancelacionAbortada());
     return;
   }
 
@@ -395,21 +368,19 @@ const manejarCliente = async (msg, numero) => {
     return;
   }
 
-  // Estado 2: menú principal
+  // Estado 2: menú principal — "1" texto, "2" GPS
   if (estado === 2) {
+    if (cuerpo === '1') {
+      await setEstadoCliente(numero, 3);
+      await enviar(numero, cls.pedirUbicacionTexto());
+      return;
+    }
+    if (cuerpo === '2') {
+      await setEstadoCliente(numero, 3);
+      await enviar(numero, cls.pedirUbicacionGPS());
+      return;
+    }
     await enviar(numero, cls.menuPrincipal(cliente?.nombre));
-    return;
-  }
-
-  // Botones de tipo de ubicación
-  if (btnId === CLBTN.PEDIR_TEXTO) {
-    await setEstadoCliente(numero, 3);
-    await enviar(numero, cls.pedirUbicacionTexto());
-    return;
-  }
-  if (btnId === CLBTN.PEDIR_GPS) {
-    await setEstadoCliente(numero, 3);
-    await enviar(numero, cls.pedirUbicacionGPS());
     return;
   }
 
@@ -436,9 +407,9 @@ const manejarCliente = async (msg, numero) => {
     return;
   }
 
-  // Estado 4: confirmando servicio
+  // Estado 4: confirmando servicio — "1" confirmar, "2" cancelar
   if (estado === 4) {
-    if (btnId === CLBTN.CONFIRMAR_SERVICIO) {
+    if (cuerpo === '1') {
       const [rows] = await db.execute(
         `SELECT id, ubicacion_texto, ubicacion_lat, ubicacion_lng FROM servicios
          WHERE cliente_whatsapp = ? AND notas = 'pendiente_confirmacion' ORDER BY id DESC LIMIT 1`,
@@ -458,13 +429,14 @@ const manejarCliente = async (msg, numero) => {
       await despacho.despacharServicio(s.id, numero, ubicacion);
       return;
     }
-    if (btnId === CLBTN.CANCELAR_SERVICIO) {
+    if (cuerpo === '2') {
       await db.execute(`DELETE FROM servicios WHERE cliente_whatsapp = ? AND notas = 'pendiente_confirmacion'`, [numero]);
       await setEstadoCliente(numero, 2);
       await enviar(numero, cls.cancelacionConfirmada());
       await enviar(numero, cls.menuPrincipal(cliente?.nombre));
       return;
     }
+    await enviar(numero, cls.confirmarServicio('(tu ubicación anterior)'));
     return;
   }
 
