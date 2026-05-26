@@ -372,9 +372,9 @@ const manejarCliente = async (msg, numero) => {
 if (estado === 2) {
   if (cuerpo === '1' || cuerpo === '2') {
     await db.execute(
-      'UPDATE clientes SET notas = ? WHERE whatsapp_no = ?',
-      [cuerpo, numero]   // guardamos si eligió texto o GPS
-    );
+  'UPDATE clientes SET opcion_menu = ? WHERE whatsapp_no = ?',
+  [cuerpo, numero]
+);
     await setEstadoCliente(numero, 3);
     await enviar(numero, cls.pedirBarrio());
     return;
@@ -397,8 +397,8 @@ if (estado === 3) {
   );
   await setEstadoCliente(numero, 4);
   // Mostrar instrucción según lo que eligió en el menú
-  const [cl] = await db.execute('SELECT notas, barrio_temp FROM clientes WHERE whatsapp_no = ?', [numero]);
-  const opcion = cl[0]?.notas;
+const clienteActual = await getCliente(numero);
+const opcion = clienteActual?.opcion_menu;
   await enviar(numero, opcion === '2' ? cls.pedirUbicacionGPS() : cls.pedirUbicacionTexto());
   return;
 }
