@@ -1,0 +1,19 @@
+{
+  "name": "moto-central-whatsapp",
+  "version": "2.0.0",
+  "description": "Central de motos por WhatsApp — Evolution API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch --env-file=.env index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mysql2": "^3.9.7",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

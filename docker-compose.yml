@@ -1,0 +1,56 @@
+# ============================================================
+# Moto Central WhatsApp — Docker Compose
+# Levanta MySQL + phpMyAdmin
+#
+# Comandos útiles:
+#   Iniciar:   docker compose up -d
+#   Detener:   docker compose down
+#   Ver logs:  docker compose logs -f db_service
+#   Reiniciar: docker compose restart db_service
+# ============================================================
+
+services:
+
+  # ── MySQL 8 ─────────────────────────────────────────────────
+  db_service:
+    image: mysql:8.1.0
+    container_name: moto_central_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE}
+      MYSQL_USER:          ${DB_USERNAME}
+      MYSQL_PASSWORD:      ${DB_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - moto_db_data:/var/lib/mysql      # datos persistentes
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── phpMyAdmin ───────────────────────────────────────────────
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: moto_central_pma
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      db_service:
+        condition: service_healthy
+    environment:
+      PMA_HOST:     db_service
+      PMA_USER:     ${DB_USERNAME}
+      PMA_PASSWORD: ${DB_PASSWORD}
+      # Tamaño máximo de importación (útil para cargar el SQL a mano)
+      UPLOAD_LIMIT: 50M
+
+# ── Volúmenes ────────────────────────────────────────────────
+volumes:
+  moto_db_data:
+    driver: local
