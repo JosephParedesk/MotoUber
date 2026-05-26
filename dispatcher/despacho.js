@@ -3,7 +3,7 @@
 // ============================================================
 'use strict';
 
-let enviar; // función enviar(numero, msg) inyectada desde index.js
+let enviar;
 let db;
 
 const init = (enviarFn, dbConnection) => {
@@ -22,9 +22,29 @@ const crearServicio = async (clienteWhatsapp, ubicacionTexto = null, lat = null,
   return result.insertId;
 };
 
+// ── Formatear ubicación ───────────────────────────────────────
+// Si tiene coordenadas GPS, genera un link de Google Maps
+
+const formatearUbicacion = (ubicacionTexto, lat, lng) => {
+  if (lat && lng) {
+    return `${ubicacionTexto}\n🗺️ https://maps.google.com/?q=${lat},${lng}`;
+  }
+  return ubicacionTexto;
+};
+
 // ── Despachar servicio ────────────────────────────────────────
 
 const despacharServicio = async (servicioId, clienteWhatsapp, ubicacion) => {
+  // Obtener datos completos del servicio para el link GPS
+  const [sRows] = await db.execute(
+    `SELECT ubicacion_texto, ubicacion_lat, ubicacion_lng FROM servicios WHERE id = ?`,
+    [servicioId]
+  );
+  const s = sRows[0];
+  const ubicacionFormateada = s
+    ? formatearUbicacion(s.ubicacion_texto || ubicacion, s.ubicacion_lat, s.ubicacion_lng)
+    : ubicacion;
+
   const [conductores] = await db.execute(
     `SELECT whatsapp_no, nombre FROM conductores WHERE estado = 'online' AND activo = 1`
   );
@@ -38,7 +58,7 @@ const despacharServicio = async (servicioId, clienteWhatsapp, ubicacion) => {
   const cs = require('../conductor_state/conductor_state');
   const promesas = conductores.map(async (conductor) => {
     try {
-      await enviar(conductor.whatsapp_no, cs.nuevoServicio(ubicacion, null));
+      await enviar(conductor.whatsapp_no, cs.nuevoServicio(ubicacionFormateada, null));
       await db.execute(
         `INSERT INTO servicio_notificaciones (servicio_id, conductor_whatsapp, estado)
          VALUES (?, ?, 'enviado') ON DUPLICATE KEY UPDATE estado = 'enviado', updated_at = NOW()`,
@@ -94,10 +114,8 @@ const manejarAceptacion = async (conductorWhatsapp, servicioId) => {
 
     await conn.commit();
 
-    // Notificar conductores que perdieron el servicio
     await notificarConductoresVencidos(servicioId, conductorWhatsapp);
 
-    // Notificar al cliente con datos del conductor
     const [datosConductor] = await db.execute(
       `SELECT nombre, whatsapp_no, placa, modelo_moto, foto_url FROM conductores WHERE whatsapp_no = ?`,
       [conductorWhatsapp]
@@ -179,13 +197,26 @@ const notificarCliente = async (clienteWhatsapp, conductor) => {
 
 // ── Getters ───────────────────────────────────────────────────
 
+// BUG FIX: también incluye 'pendiente' para cuando el conductor acaba de aceptar
 const getServicioActivoConductor = async (conductorWhatsapp) => {
+  // Primero busca servicios donde ya está asignado
   const [rows] = await db.execute(
-    `SELECT * FROM servicios WHERE conductor_whatsapp = ? AND estado IN ('asignado','en_punto','en_curso')
-     ORDER BY id DESC LIMIT 1`,
+    `SELECT s.* FROM servicios s
+     WHERE s.conductor_whatsapp = ? AND s.estado IN ('asignado','en_punto','en_curso')
+     ORDER BY s.id DESC LIMIT 1`,
     [conductorWhatsapp]
   );
-  return rows[0] || null;
+  if (rows.length > 0) return rows[0];
+
+  // Si no, busca el servicio pendiente que le fue notificado
+  const [pending] = await db.execute(
+    `SELECT s.* FROM servicios s
+     JOIN servicio_notificaciones sn ON sn.servicio_id = s.id
+     WHERE sn.conductor_whatsapp = ? AND sn.estado = 'enviado' AND s.estado = 'pendiente'
+     ORDER BY s.id DESC LIMIT 1`,
+    [conductorWhatsapp]
+  );
+  return pending[0] || null;
 };
 
 const getServicioActivoCliente = async (clienteWhatsapp) => {
@@ -248,6 +279,19 @@ const cancelarServicio = async (clienteWhatsapp) => {
     await db.execute(
       `UPDATE servicio_notificaciones SET estado = 'vencido' WHERE servicio_id = ? AND estado = 'enviado'`,
       [servicio.id]
+    );
+    // Notificar conductores que tenían el servicio pendiente
+    const [notifs] = await db.execute(
+      `SELECT conductor_whatsapp FROM servicio_notificaciones WHERE servicio_id = ? AND estado = 'vencido'`,
+      [servicio.id]
+    );
+    const cs = require('../conductor_state/conductor_state');
+    await Promise.all(
+      notifs.map(({ conductor_whatsapp }) =>
+        db.execute(`UPDATE conductores SET estado_conv = 1 WHERE whatsapp_no = ?`, [conductor_whatsapp])
+          .then(() => enviar(conductor_whatsapp, cs.servicioYaTomado()))
+          .catch(() => {})
+      )
     );
   }
   return { cancelado: true };
