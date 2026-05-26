@@ -198,7 +198,7 @@ const jid     = data.key.remoteJid;
       await manejarConductor(msgObj, conductor);
       return;
     }
-
+       console.log(`➡️ Enrutando a cliente: ${numero}`); // ← AQUÍ
     await manejarCliente(msgObj, numero);
 
   } catch (err) {
@@ -344,6 +344,7 @@ const manejarCliente = async (msg, numero) => {
   const { cuerpo, btnId, tipo, location } = msg;
   let cliente  = await upsertCliente(numero);
   const estado = cliente.estado_conv;
+    console.log(`🔍 Cliente: ${numero} | Estado: ${estado} | Cuerpo: "${cuerpo}" | BtnId: "${btnId}"`);
   const esInicio = ['hola', 'hi', 'hello', 'inicio', 'start', 'menu'].includes(cuerpo.toLowerCase());
 
   // Estado 0: nuevo usuario
